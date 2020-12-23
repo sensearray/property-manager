@@ -1,0 +1,586 @@
+#
+# Property Management System
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Copyright (C) 2020 Chengdu Covariant Technology Co., LTD.
+#
+# Email:   dev@covariant.cn
+# Github:  https://github.com/chengdu-zhirui
+# Website: https://covariant.cn
+
+@charset: utf8
+
+import imgui, imgui_font, sqlite, sqlite_ext
+using  imgui
+
+package pms
+
+# Config
+
+namespace config
+    var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
+    var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
+    var      title = "知锐物资管理系统"
+    var    version = "版本：v1.0 Beta"
+    var   out_name = "借出"
+    var    in_name = "归还"
+    var    db_path = "./items.db"
+    var  win_width = 600
+    var win_height = 700
+    var  font_size = 20
+    # classic, light, dark
+    var      style = "light"
+    var  mod1_name = "信息管理"
+    var  mod2_name = "办理借还"
+    var  mod3_name = "借还记录"
+    var  info_name = "信息"
+    var  item_name = "物品"
+    var  code_name = "编码"
+    var  desc_name = "描述"
+    var    id_name = "工号"
+    var    nm_name = "姓名"
+    var   rec_name = "借还记录"
+end
+
+# Time
+
+function align(str)
+    if str.size == 1
+        return "0" + str
+    else
+        return str
+    end
+end
+
+function get_time_str(t)
+    var hour = null
+    if t.hour < 13
+        hour = " 上午 " + align(to_string(t.hour))
+    else
+        hour = " 下午 " + align(to_string(t.hour - 12))
+    end
+    return to_string(t.year + 1900) + "年" + config.mons[t.mon] + to_string(t.mday) + "日 " + config.days[t.wday] + align(hour) + ":" + align(to_string(t.min)) + ":" + align(to_string(t.sec))
+end
+
+# Database
+
+struct database
+    var db = null
+    function open(path)
+        db = sqlite.open(path)
+    end
+    function create()
+        # Code: 条形码, Desc: 物品描述, Avail: 可用数量
+        db.prepare("CREATE TABLE ITEM_DATA(CODE TEXT, DESC TEXT, AVAIL INT)").exec()
+        # Code: 条形码, Name: 借/还人姓名, ID: 学号, Count: 数量
+        db.prepare("CREATE TABLE RENT_DATA(CODE TEXT, NAME TEXT, ID TEXT, COUNT INT)").exec()
+        # Type: 类型(OUT/IN), Code: 条形码, Time: 借/还时间, ID： 学号
+        db.prepare("CREATE TABLE RENT_REC(TYPE TEXT, CODE TEXT, TIME TEXT, ID TEXT)").exec()
+    end
+    function validate()
+        # Check Table
+        var t = sqlite_ext.table_list(db)
+        var item_found = false, rent_found = false, rec_found = false
+        foreach it in t
+            switch it
+                case "ITEM_DATA"
+                    item_found = true
+                end
+                case "RENT_DATA"
+                    rent_found = true
+                end
+                case "RENT_REC"
+                    rec_found = true
+                end
+            end
+        end
+        if !item_found || !rent_found || !rec_found
+            return false
+        end
+        function check(col, name, type)
+            return col.name == name && col.type.toupper() == type
+        end
+        # Check ITEM_DATA
+        var c = sqlite_ext.column_info(db, "ITEM_DATA")
+        if c.size != 3
+            return false
+        end
+        if !check(c[0], "CODE", "TEXT") || !check(c[1], "DESC", "TEXT") || !check(c[2], "AVAIL", "INT")
+            return false
+        end
+        # Check RENT_DATA
+        c = sqlite_ext.column_info(db, "RENT_DATA")
+        if c.size != 4
+            return false
+        end
+        if !check(c[0], "CODE", "TEXT") || !check(c[1], "NAME", "TEXT") || !check(c[2], "ID", "TEXT") || !check(c[3], "COUNT", "INT")
+            return false
+        end
+        # Check RENT_REC
+        c = sqlite_ext.column_info(db, "RENT_REC")
+        if c.size != 4
+            return false
+        end
+        if !check(c[0], "TYPE", "TEXT") || !check(c[1], "CODE", "TEXT") || !check(c[2], "TIME", "TEXT") || !check(c[3], "ID", "TEXT")
+            return false
+        end
+        return true
+    end
+    function gen_code()
+        var t = runtime.local_time()
+        var base = to_string(t.yday)
+        while base.size < 3
+            base = "0" + base
+        end
+        var min_now = t.hour*60 + t.min
+        min_now = to_string(math.randint(min_now, 9999))
+        while min_now.size < 4
+            min_now = "0" + min_now
+        end
+        return to_string(t.year + 1900) + base + min_now
+    end
+    function gen_unique_code()
+        var code = null
+        loop
+            code = gen_code()
+            var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        until result.size == 0
+        return code
+    end
+    function add_item(code, desc, override)
+        var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        if result.size > 0
+            if desc.size != 0
+                if !override && desc != result[0][1].data
+                    return 0
+                end
+                var stmt = db.prepare("UPDATE ITEM_DATA SET DESC=? WHERE CODE=\"" + code + "\"")
+                stmt.bind_text(1, desc)
+                stmt.exec()
+            end
+            var stmt = db.prepare("UPDATE ITEM_DATA SET AVAIL=? WHERE CODE=\"" + code + "\"")
+            stmt.bind_integer(1, result[0][2].data + 1)
+            stmt.exec()
+            return result[0][2].data + 1
+        else
+            var stmt = db.prepare("INSERT INTO ITEM_DATA VALUES(?,?,?)")
+            stmt.bind_text(1, code)
+            stmt.bind_text(2, desc)
+            stmt.bind_integer(3, 1)
+            stmt.exec()
+            return 1
+        end
+    end
+    function find_item(code)
+        return sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+    end
+    # Return Values:
+    #>=0: Remain items
+    # -1: No available item
+    # -2: Item not found
+    # -3: Different name
+    function rent(code, name, id, override)
+        # Compose Time String
+        var time = get_time_str(runtime.local_time())
+        # Query Item Data
+        var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        if result.size == 0
+            return -2
+        end
+        if result[0][2].data == 0
+            return -1
+        end
+        var remain = result[0][2].data - 1
+        # Query Rent Data
+        result = sqlite_ext.exec(db, "SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+        if result.size != 0
+            # Override Name
+            if result[0][1].data != name
+                if override
+                    var stmt = db.prepare("UPDATE RENT_DATA SET NAME=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+                    stmt.bind_text(1, name)
+                    stmt.exec()
+                else
+                    return -3
+                end
+            end
+            # Update Rent Count
+            var stmt = db.prepare("UPDATE RENT_DATA SET COUNT=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+            stmt.bind_integer(1, result[0][3].data + 1)
+            stmt.exec()
+        else
+            # Insert New Data
+            var stmt = db.prepare("INSERT INTO RENT_DATA VALUES(?,?,?,?)")
+            stmt.bind_text(1, code)
+            stmt.bind_text(2, name)
+            stmt.bind_text(3, id)
+            stmt.bind_integer(4, 1)
+            stmt.exec()
+        end
+        # Update Item Available
+        var stmt = db.prepare("UPDATE ITEM_DATA SET AVAIL=? WHERE CODE=\"" + code + "\"")
+        stmt.bind_integer(1, remain)
+        stmt.exec()
+        # Insert Rent Record
+        stmt = db.prepare("INSERT INTO RENT_REC VALUES(?,?,?,?)")
+        stmt.bind_text(1, config.out_name)
+        stmt.bind_text(2, code)
+        stmt.bind_text(3, time)
+        stmt.bind_text(4, id)
+        stmt.exec()
+        return remain
+    end
+    # Return Values:
+    # >0: Remain items
+    #  0: Item not found
+    # -1: Rent Count equals 0
+    # -2: Different name
+    # -3: Rent Data not found
+    function give_back(code, name, id, override)
+        # Compose Time String
+        var time = get_time_str(runtime.local_time())
+        # Query Item Data
+        var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        if result.size == 0
+            return 0
+        end
+        var remain = result[0][2].data + 1
+        # Query Rent Data
+        result = sqlite_ext.exec(db, "SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+        if result.size != 0
+            if result[0][3].data == 0
+                return -1
+            end
+            # Override Name
+            if result[0][1].data != name
+                if override
+                    var stmt = db.prepare("UPDATE RENT_DATA SET NAME=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+                    stmt.bind_text(1, name)
+                    stmt.exec()
+                else
+                    return -2
+                end
+            end
+            # Update Rent Count
+            var stmt = db.prepare("UPDATE RENT_DATA SET COUNT=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+            stmt.bind_integer(1, result[0][3].data - 1)
+            stmt.exec()
+        else
+            return -3
+        end
+        # Update Item Available
+        var stmt = db.prepare("UPDATE ITEM_DATA SET AVAIL=? WHERE CODE=\"" + code + "\"")
+        stmt.bind_integer(1, remain)
+        stmt.exec()
+        # Insert Rent Record
+        stmt = db.prepare("INSERT INTO RENT_REC VALUES(?,?,?,?)")
+        stmt.bind_text(1, config.in_name)
+        stmt.bind_text(2, code)
+        stmt.bind_text(3, time)
+        stmt.bind_text(4, id)
+        stmt.exec()
+        return remain
+    end
+    function find_rent(code, id)
+        return sqlite_ext.exec(db, "SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id +"\"")
+    end
+    function get_log()
+        return sqlite_ext.exec(db, "SELECT * FROM RENT_REC")
+    end
+end
+
+# GUI
+
+struct gui
+    var db = null
+    var ui = null
+    var font = null
+
+    function ui_prep()
+        ui.prepare()
+        imgui.push_font(font)
+    end
+
+    function ui_render()
+        imgui.pop_font()
+        ui.render()
+    end
+
+    function main()
+        system.file.remove("./imgui.ini")
+        db = new database
+        db.open(config.db_path)
+        if !db.validate()
+            db = new database
+            system.file.remove(config.db_path)
+            db.open(config.db_path)
+            db.create()
+        end
+        ui = window_application(config.win_width, config.win_height, config.title)
+        font = add_font_extend_cn(imgui_font.source_han_sans, config.font_size)
+        switch config.style
+            case "classic"
+                style_color_classic()
+            end
+            case "light"
+                style_color_light()
+            end
+            case "dark"
+                style_color_dark()
+            end
+        end
+        var window_open = true, tab1_open = true, tab2_open = true, log_open = true
+        var message = "无错误", code = new string, desc = new string
+        var override_describe = false, override_name = false
+        var name = new string, id = new string
+        var refresh = true, log_limit = 0
+        loop
+            if ui.is_closed()
+                system.exit(0)
+            end
+            window_open = true
+            ui_prep()
+            begin_window("Win1", window_open, {flags.menu_bar, flags.no_title_bar, flags.no_resize, flags.no_move, flags.no_collapse})
+            set_window_pos(vec2(0, 0))
+            if log_open
+                set_window_size(vec2(ui.get_window_width(), 2*ui.get_window_height()/3))
+            else
+                set_window_size(vec2(ui.get_window_width(), ui.get_window_height()))
+            end
+            if begin_menu_bar()
+                if begin_menu("视图管理", true)
+                    if menu_item("显示" + config.mod1_name, "", !tab1_open)
+                        tab1_open = true
+                    end
+                    if menu_item("显示" + config.mod2_name, "", !tab2_open)
+                        tab2_open = true
+                    end
+                    if menu_item("显示" + config.mod3_name, "", !log_open)
+                        log_open = true
+                    end
+                    end_menu()
+                end
+                menu_item(config.version, "", false)
+                end_menu_bar()
+            end
+            if tab1_open || tab2_open
+                text(message)
+                begin_tab_bar("TabBar")
+                if begin_tab_item(config.mod1_name, tab1_open, {})
+                    text(config.code_name)
+                    same_line()
+                    input_text("##TXT1", code, 128)
+                    same_line()
+                    if button("清空" + config.code_name)
+                        code = new string
+                    end
+                    text(config.desc_name)
+                    same_line()
+                    input_text_multiline("##TXT2", desc, 1024)
+                    same_line()
+                    if button("查询" + config.info_name + "##QUERY1")
+                        if code.size != 0
+                            var arr = db.find_item(code)
+                            if arr.size != 0
+                                desc = arr[0][1].data
+                                message = config.item_name + "可用数量：" + arr[0][2].data
+                            else
+                                message = "错误：" + config.code + "不存在"
+                            end
+                        else
+                            message = "错误：" + config.code_name + "为空"
+                        end
+                    end
+                    separator()
+                    if button("生成" + config.code_name)
+                        code = db.gen_unique_code()
+                    end
+                    same_line()
+                    if button("提交" + config.info_name)
+                        if code.size != 0
+                            if db.add_item(code, desc, override_describe) > 0
+                                message = "提交成功"
+                                code = new string
+                                desc = new string
+                            else
+                                message = "错误：" + config.item_name + "冲突"
+                            end
+                        else
+                            message = "错误：" + config.code_name + "为空"
+                        end
+                        override_describe = false
+                    end
+                    check_box("覆盖" + config.desc_name + "##CHECK1", override_describe)
+                    end_tab_item()
+                end
+                if begin_tab_item(config.mod2_name, tab2_open, {})
+                    text(config.code_name)
+                    same_line()
+                    input_text("##TXT1", code, 128)
+                    same_line()
+                    if button("清空" + config.code_name)
+                        code = new string
+                    end
+                    text(config.id_name)
+                    same_line()
+                    input_text("##TXT3", id, 128)
+                    same_line()
+                    if button("清空" + config.id_name)
+                        id = new string
+                    end
+                    text(config.nm_name)
+                    same_line()
+                    input_text("##TXT4", name, 128)
+                    same_line()
+                    if button("查询" + config.info_name + "##QUERY2")
+                        if code.size != 0 && id.size != 0
+                            var arr = db.find_rent(code, id)
+                            if arr.size != 0
+                                name = arr[0][1].data
+                                message = "已" + config.out_name + "数量：" + arr[0][3].data
+                            else
+                                message = "错误：" + config.rec_name + "不存在"
+                            end
+                        else
+                            message = "错误：" + config.code_name + "或" + config.id_name + "为空"
+                        end
+                    end
+                    separator()
+                    if button("办理" + config.out_name)
+                        if code.size != 0 && id.size != 0
+                            var ret = db.rent(code, name, id, override_name)
+                            switch ret
+                                default
+                                    message = "剩余" + config.item_name + "数量：" + ret
+                                    code = new string
+                                    desc = new string
+                                    name = new string
+                                    id = new string
+                                    refresh = true
+                                end
+                                case -1
+                                    message = "错误：无可用" + config.item_name
+                                end
+                                case -2
+                                    message = "错误：" + config.info_name + "未找到"
+                                end
+                                case -3
+                                    message = "错误：" + config.nm_name + "不匹配"
+                                end
+                            end
+                        else
+                            message = "错误：" + config.code_name + "或" + config.id_name + "为空"
+                        end
+                        override_name = false
+                    end
+                    same_line()
+                    if button("办理" + config.in_name)
+                        if code.size != 0 && id.size != 0
+                            var ret = db.give_back(code, name, id, override_name)
+                            switch ret
+                                default
+                                    message = "剩余" + config.item_name + "数量：" + ret
+                                    code = new string
+                                    desc = new string
+                                    name = new string
+                                    id = new string
+                                    refresh = true
+                                end
+                                case 0
+                                    message = "错误：" + config.info_name + "未找到"
+                                end
+                                case -1
+                                    message = "错误：" + config.item_name + "已全部" + config.in_name
+                                end
+                                case -2
+                                    message = "错误：" + config.nm_name + "不匹配"
+                                end
+                                case -3
+                                    message = "错误：" + config.rec_name + "未找到"
+                                end
+                            end
+                        else
+                            message = "错误：" + config.code_name + "或" + config.id_name + "为空"
+                        end
+                        override_name = false
+                    end
+                    check_box("覆盖" + config.nm_name + "##CHECK1", override_name)
+                    end_tab_item()
+                end
+                end_tab_bar()
+            else
+                text("请在“视图管理”中选择一个功能")
+            end
+            end_window()
+            if log_open
+                begin_window(config.mod3_name, log_open, {flags.menu_bar, flags.no_resize, flags.no_move, flags.no_collapse})
+                    set_window_pos(vec2(0, 2*ui.get_window_height()/3))
+                    set_window_size(vec2(ui.get_window_width(), ui.get_window_height()/3))
+                    if begin_menu_bar()
+                        if menu_item("显示所有", "", log_limit != 0)
+                            log_limit = 0
+                            refresh = true
+                        end
+                        if menu_item("显示最近10条", "", log_limit != 10)
+                            log_limit = 10
+                            refresh = true
+                        end
+                        if menu_item("显示最近100条", "", log_limit != 100)
+                            log_limit = 100
+                            refresh = true
+                        end
+                        menu_item(get_time_str(runtime.local_time()), "", false)
+                        end_menu_bar()
+                    end
+                    var log = db.get_log()
+                    if log_limit > 0
+                        while log.size > log_limit
+                            log.pop_front()
+                        end
+                    end
+                    columns(4, "##RENT_REC", true)
+                    var unit = ui.get_window_width()/10
+                    set_column_width(0, unit)
+                    set_column_width(1, 2*unit)
+                    set_column_width(2, 5*unit)
+                    set_column_width(3, 2*unit)
+                    text("记录")
+                    next_column()
+                    text(config.code_name)
+                    next_column()
+                    text("时间")
+                    next_column()
+                    text(config.id_name)
+                    next_column()
+                    foreach line in log
+                        separator()
+                        foreach it in line
+                            text(it.data)
+                            next_column()
+                        end
+                    end
+                    if refresh
+                        set_scroll_here()
+                        refresh = false
+                    end
+                end_window()
+            end
+            ui_render()
+        end
+    end
+end
+
+function start()
+    (new gui).main()
+end
