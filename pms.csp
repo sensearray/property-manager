@@ -359,6 +359,9 @@ struct gui
             end
             window_open = true
             ui_prep()
+            if !tab3_open
+                show_bar = false
+            end
             begin_window("Win1", window_open, {flags.menu_bar, flags.no_title_bar, flags.no_resize, flags.no_move, flags.no_collapse})
             set_window_pos(vec2(0, 0))
             if log_open
@@ -379,9 +382,6 @@ struct gui
                     end
                     if menu_item("显示" + config.mod3_name, "", !log_open)
                         log_open = true
-                    end
-                    if menu_item("隐藏" + config.bar_name, "", show_bar)
-                        show_bar = false
                     end
                     end_menu()
                 end
