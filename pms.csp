@@ -21,7 +21,7 @@
 
 @charset: utf8
 
-import imgui, imgui_font, sqlite, sqlite_ext
+import imgui, imgui_font, sqlite, sqlite_ext, code128
 using  imgui
 
 package pms
@@ -32,7 +32,7 @@ namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
     var      title = "知锐物资管理系统"
-    var    version = "版本：v1.0 Beta"
+    var    version = "版本：v1.1 Beta"
     var   out_name = "借出"
     var    in_name = "归还"
     var    db_path = "./items.db"
@@ -44,10 +44,12 @@ namespace config
     var  mod1_name = "信息管理"
     var  mod2_name = "办理借还"
     var  mod3_name = "借还记录"
+    var  mod4_name = "生成条码"
     var  info_name = "信息"
     var  item_name = "物品"
     var  code_name = "编码"
     var  desc_name = "描述"
+    var   bar_name = "条码"
     var    id_name = "工号"
     var    nm_name = "姓名"
     var   rec_name = "借还记录"
@@ -317,6 +319,10 @@ struct gui
         ui.render()
     end
 
+    function barcode_callback(x1, y1, x2, y2, color)
+        add_rect_filled(vec2(x1, y1), vec2(x2, y2), color ? vec4(1, 1, 1, 1) : vec4(0, 0, 0, 1), 0)
+    end
+
     function main()
         system.file.remove("./imgui.ini")
         db = new database
@@ -340,11 +346,13 @@ struct gui
                 style_color_dark()
             end
         end
-        var window_open = true, tab1_open = true, tab2_open = true, log_open = true
+        var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true
         var message = "无错误", code = new string, desc = new string
         var override_describe = false, override_name = false
         var name = new string, id = new string
         var refresh = true, log_limit = 0
+        var show_bar = false, barcode = new string, total_size = 0
+        var slice = 2, height = 90, padding = 6, scale = 1
         loop
             if ui.is_closed()
                 system.exit(0)
@@ -366,15 +374,21 @@ struct gui
                     if menu_item("显示" + config.mod2_name, "", !tab2_open)
                         tab2_open = true
                     end
+                    if menu_item("显示" + config.mod4_name, "", !tab3_open)
+                        tab3_open = true
+                    end
                     if menu_item("显示" + config.mod3_name, "", !log_open)
                         log_open = true
+                    end
+                    if menu_item("隐藏" + config.bar_name, "", show_bar)
+                        show_bar = false
                     end
                     end_menu()
                 end
                 menu_item(config.version, "", false)
                 end_menu_bar()
             end
-            if tab1_open || tab2_open
+            if tab1_open || tab2_open || tab3_open
                 text(message)
                 begin_tab_bar("TabBar")
                 if begin_tab_item(config.mod1_name, tab1_open, {})
@@ -516,6 +530,49 @@ struct gui
                         override_name = false
                     end
                     check_box("覆盖" + config.nm_name + "##CHECK1", override_name)
+                    end_tab_item()
+                end
+                if begin_tab_item(config.mod4_name, tab3_open, {})
+                    text(config.code_name)
+                    same_line()
+                    input_text("##TXT1", code, 128)
+                    same_line()
+                    if button("清空" + config.code_name)
+                        code = new string
+                    end
+                    text("宽度")
+                    same_line()
+                    slider_float("##Slice", slice, 1, 10)
+                    text("高度")
+                    same_line()
+                    slider_float("##Height", height, 20, 90)
+                    if height - 2*padding*slice < 10
+                        padding = (height - 10)/slice/2
+                    end
+                    text("留白")
+                    same_line()
+                    slider_float("##Padding", padding, 0, (height - 10)/slice/2)
+                    text("缩放")
+                    same_line()
+                    slider_float("##Scale", scale, 1, 6)
+                    separator()
+                    if button("生成" + config.code_name)
+                        code = db.gen_unique_code()
+                    end
+                    same_line()
+                    if button("生成" + config.bar_name) && code.size != 0
+                        show_bar = true
+                        barcode = code128.gen_smart(code)
+                        total_size = 0
+                        foreach ch in barcode do total_size += to_integer(ch) - to_integer('0')
+                    end
+                    same_line()
+                    if button("隐藏" + config.bar_name)
+                        show_bar = false
+                    end
+                    if show_bar
+                        code128.draw_code(barcode_callback, barcode, slice*scale, height*scale, padding, 0.5*(ui.get_window_width() - slice*scale*(total_size + padding)), 0.5*(ui.get_window_height() - scale*height), total_size)
+                    end
                     end_tab_item()
                 end
                 end_tab_bar()
