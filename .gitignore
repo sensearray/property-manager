@@ -1,2 +1,3 @@
 *.db
 imgui.ini
+db_config.json

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Copyright (C) 2020 Chengdu Covariant Technology Co., LTD.
+# Copyright (C) 2020-2021 Chengdu Covariant Technology Co., LTD.
 #
 # Email:   dev@covariant.cn
 # Github:  https://github.com/chengdu-zhirui
@@ -21,21 +21,22 @@
 
 @charset: utf8
 
-import imgui, imgui_font, sqlite, sqlite_ext, code128
+import imgui, imgui_font, code128, csdbc
 using  imgui
 
 package pms
 
 # Config
 
+var csdbc_adapter = null
+
 namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
     var      title = "知锐物资管理系统"
-    var    version = "版本：v1.1 Beta"
+    var    version = "版本：v1.2 Beta"
     var   out_name = "借出"
     var    in_name = "归还"
-    var    db_path = "./items.db"
     var  win_width = 600
     var win_height = 700
     var  font_size = 20
@@ -78,21 +79,18 @@ end
 # Database
 
 struct database
-    var db = null
-    function open(path)
-        db = sqlite.open(path)
-    end
+    var db = csdbc_adapter
     function create()
-        # Code: 条形码, Desc: 物品描述, Avail: 可用数量
-        db.prepare("CREATE TABLE ITEM_DATA(CODE TEXT, DESC TEXT, AVAIL INT)").exec()
+        # Code: 条形码, Item_Desc: 物品描述, Avail: 可用数量
+        db.just_exec("CREATE TABLE ITEM_DATA(CODE " + db.typenames_full[csdbc.sql_text] + ", ITEM_DESC " + db.typenames_full[csdbc.sql_text] + ", AVAIL " + db.typenames_full[csdbc.sql_int] + ")")
         # Code: 条形码, Name: 借/还人姓名, ID: 学号, Count: 数量
-        db.prepare("CREATE TABLE RENT_DATA(CODE TEXT, NAME TEXT, ID TEXT, COUNT INT)").exec()
+        db.just_exec("CREATE TABLE RENT_DATA(CODE " + db.typenames_full[csdbc.sql_text] + ", NAME " + db.typenames_full[csdbc.sql_text] + ", ID " + db.typenames_full[csdbc.sql_text] + ", COUNT " + db.typenames_full[csdbc.sql_int] + ")")
         # Type: 类型(OUT/IN), Code: 条形码, Time: 借/还时间, ID： 学号
-        db.prepare("CREATE TABLE RENT_REC(TYPE TEXT, CODE TEXT, TIME TEXT, ID TEXT)").exec()
+        db.just_exec("CREATE TABLE RENT_REC(TYPE " + db.typenames_full[csdbc.sql_text] + ", CODE " + db.typenames_full[csdbc.sql_text] + ", TIME " + db.typenames_full[csdbc.sql_text] + ", ID " + db.typenames_full[csdbc.sql_text] + ")")
     end
     function validate()
         # Check Table
-        var t = sqlite_ext.table_list(db)
+        var t = db.table_list()
         var item_found = false, rent_found = false, rec_found = false
         foreach it in t
             switch it
@@ -114,27 +112,27 @@ struct database
             return col.name == name && col.type.toupper() == type
         end
         # Check ITEM_DATA
-        var c = sqlite_ext.column_info(db, "ITEM_DATA")
+        var c = db.column_info("ITEM_DATA")
         if c.size != 3
             return false
         end
-        if !check(c[0], "CODE", "TEXT") || !check(c[1], "DESC", "TEXT") || !check(c[2], "AVAIL", "INT")
+        if !check(c[0], "CODE", db.typenames[csdbc.sql_text]) || !check(c[1], "ITEM_DESC", db.typenames[csdbc.sql_text]) || !check(c[2], "AVAIL", db.typenames[csdbc.sql_int])
             return false
         end
         # Check RENT_DATA
-        c = sqlite_ext.column_info(db, "RENT_DATA")
+        c = db.column_info("RENT_DATA")
         if c.size != 4
             return false
         end
-        if !check(c[0], "CODE", "TEXT") || !check(c[1], "NAME", "TEXT") || !check(c[2], "ID", "TEXT") || !check(c[3], "COUNT", "INT")
+        if !check(c[0], "CODE", db.typenames[csdbc.sql_text]) || !check(c[1], "NAME", db.typenames[csdbc.sql_text]) || !check(c[2], "ID", db.typenames[csdbc.sql_text]) || !check(c[3], "COUNT", db.typenames[csdbc.sql_int])
             return false
         end
         # Check RENT_REC
-        c = sqlite_ext.column_info(db, "RENT_REC")
+        c = db.column_info("RENT_REC")
         if c.size != 4
             return false
         end
-        if !check(c[0], "TYPE", "TEXT") || !check(c[1], "CODE", "TEXT") || !check(c[2], "TIME", "TEXT") || !check(c[3], "ID", "TEXT")
+        if !check(c[0], "TYPE", db.typenames[csdbc.sql_text]) || !check(c[1], "CODE", db.typenames[csdbc.sql_text]) || !check(c[2], "TIME", db.typenames[csdbc.sql_text]) || !check(c[3], "ID", db.typenames[csdbc.sql_text])
             return false
         end
         return true
@@ -156,36 +154,36 @@ struct database
         var code = null
         loop
             code = gen_code()
-            var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+            var result = db.exec("SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
         until result.size == 0
         return code
     end
     function add_item(code, desc, override)
-        var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        var result = db.exec("SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
         if result.size > 0
             if desc.size != 0
                 if !override && desc != result[0][1].data
                     return 0
                 end
-                var stmt = db.prepare("UPDATE ITEM_DATA SET DESC=? WHERE CODE=\"" + code + "\"")
-                stmt.bind_text(1, desc)
-                stmt.exec()
+                var stmt = db.prepare("UPDATE ITEM_DATA SET ITEM_DESC=? WHERE CODE=\"" + code + "\"")
+                stmt.bind(0, desc)
+                stmt.just_exec()
             end
             var stmt = db.prepare("UPDATE ITEM_DATA SET AVAIL=? WHERE CODE=\"" + code + "\"")
-            stmt.bind_integer(1, result[0][2].data + 1)
-            stmt.exec()
-            return result[0][2].data + 1
+            stmt.bind(0, to_string(to_integer(result[0][2].data.to_number() + 1)))
+            stmt.just_exec()
+            return result[0][2].data.to_number() + 1
         else
             var stmt = db.prepare("INSERT INTO ITEM_DATA VALUES(?,?,?)")
-            stmt.bind_text(1, code)
-            stmt.bind_text(2, desc)
-            stmt.bind_integer(3, 1)
-            stmt.exec()
+            stmt.bind(0, code)
+            stmt.bind(1, desc)
+            stmt.bind(2, "1")
+            stmt.just_exec()
             return 1
         end
     end
     function find_item(code)
-        return sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        return db.exec("SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
     end
     # Return Values:
     #>=0: Remain items
@@ -196,51 +194,51 @@ struct database
         # Compose Time String
         var time = get_time_str(runtime.local_time())
         # Query Item Data
-        var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        var result = db.exec("SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
         if result.size == 0
             return -2
         end
-        if result[0][2].data == 0
+        if result[0][2].data.to_number() == 0
             return -1
         end
-        var remain = result[0][2].data - 1
+        var remain = result[0][2].data.to_number() - 1
         # Query Rent Data
-        result = sqlite_ext.exec(db, "SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+        result = db.exec("SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
         if result.size != 0
             # Override Name
             if result[0][1].data != name
                 if override
                     var stmt = db.prepare("UPDATE RENT_DATA SET NAME=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
-                    stmt.bind_text(1, name)
-                    stmt.exec()
+                    stmt.bind(0, name)
+                    stmt.just_exec()
                 else
                     return -3
                 end
             end
             # Update Rent Count
             var stmt = db.prepare("UPDATE RENT_DATA SET COUNT=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
-            stmt.bind_integer(1, result[0][3].data + 1)
-            stmt.exec()
+            stmt.bind(0, to_string(to_integer(result[0][3].data.to_number() + 1)))
+            stmt.just_exec()
         else
             # Insert New Data
             var stmt = db.prepare("INSERT INTO RENT_DATA VALUES(?,?,?,?)")
-            stmt.bind_text(1, code)
-            stmt.bind_text(2, name)
-            stmt.bind_text(3, id)
-            stmt.bind_integer(4, 1)
-            stmt.exec()
+            stmt.bind(0, code)
+            stmt.bind(1, name)
+            stmt.bind(2, id)
+            stmt.bind(3, "1")
+            stmt.just_exec()
         end
         # Update Item Available
         var stmt = db.prepare("UPDATE ITEM_DATA SET AVAIL=? WHERE CODE=\"" + code + "\"")
-        stmt.bind_integer(1, remain)
-        stmt.exec()
+        stmt.bind(0, to_string(to_integer(remain)))
+        stmt.just_exec()
         # Insert Rent Record
         stmt = db.prepare("INSERT INTO RENT_REC VALUES(?,?,?,?)")
-        stmt.bind_text(1, config.out_name)
-        stmt.bind_text(2, code)
-        stmt.bind_text(3, time)
-        stmt.bind_text(4, id)
-        stmt.exec()
+        stmt.bind(0, config.out_name)
+        stmt.bind(1, code)
+        stmt.bind(2, time)
+        stmt.bind(3, id)
+        stmt.just_exec()
         return remain
     end
     # Return Values:
@@ -253,52 +251,52 @@ struct database
         # Compose Time String
         var time = get_time_str(runtime.local_time())
         # Query Item Data
-        var result = sqlite_ext.exec(db, "SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
+        var result = db.exec("SELECT * FROM ITEM_DATA WHERE CODE=\"" + code + "\"")
         if result.size == 0
             return 0
         end
-        var remain = result[0][2].data + 1
+        var remain = result[0][2].data.to_number() + 1
         # Query Rent Data
-        result = sqlite_ext.exec(db, "SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
+        result = db.exec("SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
         if result.size != 0
-            if result[0][3].data == 0
+            if result[0][3].data.to_number() == 0
                 return -1
             end
             # Override Name
             if result[0][1].data != name
                 if override
                     var stmt = db.prepare("UPDATE RENT_DATA SET NAME=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
-                    stmt.bind_text(1, name)
-                    stmt.exec()
+                    stmt.bind(0, name)
+                    stmt.just_exec()
                 else
                     return -2
                 end
             end
             # Update Rent Count
             var stmt = db.prepare("UPDATE RENT_DATA SET COUNT=? WHERE CODE=\"" + code + "\" AND ID=\"" + id + "\"")
-            stmt.bind_integer(1, result[0][3].data - 1)
-            stmt.exec()
+            stmt.bind(0, to_string(to_integer(result[0][3].data.to_number() - 1)))
+            stmt.just_exec()
         else
             return -3
         end
         # Update Item Available
         var stmt = db.prepare("UPDATE ITEM_DATA SET AVAIL=? WHERE CODE=\"" + code + "\"")
-        stmt.bind_integer(1, remain)
-        stmt.exec()
+        stmt.bind(0, to_string(to_integer(remain)))
+        stmt.just_exec()
         # Insert Rent Record
         stmt = db.prepare("INSERT INTO RENT_REC VALUES(?,?,?,?)")
-        stmt.bind_text(1, config.in_name)
-        stmt.bind_text(2, code)
-        stmt.bind_text(3, time)
-        stmt.bind_text(4, id)
-        stmt.exec()
+        stmt.bind(0, config.in_name)
+        stmt.bind(1, code)
+        stmt.bind(2, time)
+        stmt.bind(3, id)
+        stmt.just_exec()
         return remain
     end
     function find_rent(code, id)
-        return sqlite_ext.exec(db, "SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id +"\"")
+        return db.exec("SELECT * FROM RENT_DATA WHERE CODE=\"" + code + "\" AND ID=\"" + id +"\"")
     end
     function get_log()
-        return sqlite_ext.exec(db, "SELECT * FROM RENT_REC")
+        return db.exec("SELECT * FROM RENT_REC")
     end
 end
 
@@ -326,11 +324,7 @@ struct gui
     function main()
         system.file.remove("./imgui.ini")
         db = new database
-        db.open(config.db_path)
         if !db.validate()
-            db = new database
-            system.file.remove(config.db_path)
-            db.open(config.db_path)
             db.create()
         end
         ui = window_application(config.win_width, config.win_height, config.title)
@@ -410,7 +404,7 @@ struct gui
                                 desc = arr[0][1].data
                                 message = config.item_name + "可用数量：" + arr[0][2].data
                             else
-                                message = "错误：" + config.code + "不存在"
+                                message = "错误：" + config.code_name + "不存在"
                             end
                         else
                             message = "错误：" + config.code_name + "为空"
