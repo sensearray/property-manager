@@ -22,6 +22,7 @@
 @charset: utf8
 
 import imgui, imgui_font, code128, csdbc
+import codec.json as json
 using  imgui
 
 package pms
@@ -46,6 +47,8 @@ namespace config
     var  mod2_name = "办理借还"
     var  mod3_name = "借还记录"
     var  mod4_name = "生成条码"
+    var  mod5_name = "签到/签退"
+    var  mod6_name = "值班记录"
     var  info_name = "信息"
     var  item_name = "物品"
     var  code_name = "编码"
@@ -54,6 +57,9 @@ namespace config
     var    id_name = "工号"
     var    nm_name = "姓名"
     var   rec_name = "借还记录"
+    var   man_hour = "工时"
+    var   check_in = "签到"
+    var  check_out = "签退"
 end
 
 # Time
@@ -76,6 +82,21 @@ function get_time_str(t)
     return to_string(t.year + 1900) + "年" + config.mons[t.mon] + to_string(t.mday) + "日 " + config.days[t.wday] + align(hour) + ":" + align(to_string(t.min)) + ":" + align(to_string(t.sec))
 end
 
+function to_timestamp(t)
+@begin
+    return json.to_string(json.from_var({
+        "year": t.year,
+        "day" : t.yday,
+        "hour": t.hour,
+        "min" : t.min
+    }.to_hash_map()))
+@end
+end
+
+function from_timestamp(t)
+    return json.to_var(json.from_string(t))
+end
+
 # Database
 
 struct database
@@ -87,11 +108,15 @@ struct database
         db.just_exec("CREATE TABLE RENT_DATA(CODE " + db.typenames_full[csdbc.sql_text] + ", NAME " + db.typenames_full[csdbc.sql_text] + ", ID " + db.typenames_full[csdbc.sql_text] + ", COUNT " + db.typenames_full[csdbc.sql_int] + ")")
         # Type: 类型(OUT/IN), Code: 条形码, Time: 借/还时间, ID： 学号
         db.just_exec("CREATE TABLE RENT_REC(TYPE " + db.typenames_full[csdbc.sql_text] + ", CODE " + db.typenames_full[csdbc.sql_text] + ", TIME " + db.typenames_full[csdbc.sql_text] + ", ID " + db.typenames_full[csdbc.sql_text] + ")")
+        # ID: 学号, STATE: 状态(IN/OUT) TIME_STAMP: 时间戳, TIME_SUM: 打卡总时间
+        db.just_exec("CREATE TABLE ATTD_DATA(ID " + db.typenames_full[csdbc.sql_text] + ", STATE " + db.typenames_full[csdbc.sql_text] + ", TIME_STAMP " + db.typenames_full[csdbc.sql_text] + ", TIME_SUM " + db.typenames_full[csdbc.sql_int] + ")")
+        # Type: 类型(OUT/IN), ID： 学号, Time: 打卡时间
+        db.just_exec("CREATE TABLE ATTD_REC(TYPE " + db.typenames_full[csdbc.sql_text] + ", ID " + db.typenames_full[csdbc.sql_text] + ", TIME " + db.typenames_full[csdbc.sql_text] + ")")
     end
     function validate()
         # Check Table
         var t = db.table_list()
-        var item_found = false, rent_found = false, rec_found = false
+        var item_found = false, rent_found = false, rec_found = false, attd_found = false, atrec_found = false
         foreach it in t
             switch it
                 case "ITEM_DATA"
@@ -103,9 +128,15 @@ struct database
                 case "RENT_REC"
                     rec_found = true
                 end
+                case "ATTD_DATA"
+                    attd_found = true
+                end
+                case "ATTD_REC"
+                    atrec_found = true
+                end
             end
         end
-        if !item_found || !rent_found || !rec_found
+        if !item_found || !rent_found || !rec_found || !attd_found || !atrec_found
             return false
         end
         function check(col, name, type)
@@ -133,6 +164,22 @@ struct database
             return false
         end
         if !check(c[0], "TYPE", db.typenames[csdbc.sql_text]) || !check(c[1], "CODE", db.typenames[csdbc.sql_text]) || !check(c[2], "TIME", db.typenames[csdbc.sql_text]) || !check(c[3], "ID", db.typenames[csdbc.sql_text])
+            return false
+        end
+        # Check ATTD_DATA
+        c = db.column_info("ATTD_DATA")
+        if c.size != 4
+            return false
+        end
+        if !check(c[0], "ID", db.typenames[csdbc.sql_text]) || !check(c[1], "STATE", db.typenames[csdbc.sql_text]) || !check(c[2], "TIME_STAMP", db.typenames[csdbc.sql_text]) || !check(c[3], "TIME_SUM", db.typenames[csdbc.sql_int])
+            return false
+        end
+        # Check ATTD_REC
+        c = db.column_info("ATTD_REC")
+        if c.size != 3
+            return false
+        end
+        if !check(c[0], "TYPE", db.typenames[csdbc.sql_text]) || !check(c[1], "ID", db.typenames[csdbc.sql_text]) || !check(c[2], "TIME", db.typenames[csdbc.sql_text])
             return false
         end
         return true
@@ -298,6 +345,74 @@ struct database
     function get_log()
         return db.exec("SELECT * FROM RENT_REC")
     end
+    # Return Values:
+    # >0: Legal Check Time
+    # =0: Check-in Successfully
+    # -1: Lacking Checkout(will not accumulate summary time)
+    function check_in_out(id)
+        var time_now = runtime.local_time()
+        var stmt = db.prepare("SELECT * FROM ATTD_DATA WHERE ID=?")
+        stmt.bind(0, id)
+        var result = stmt.exec()
+        if result.size > 0
+            var time_stamp = from_timestamp(result[0][2].data)
+            var tsum = time_now.hour - time_stamp.hour
+            var state = null
+            if time_stamp.day == time_now.yday
+                if result[0][1].data == "IN"
+                    stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=?, TIME_SUM=? WHERE ID=?")
+                    stmt.bind(0, "OUT")
+                    stmt.bind(1, to_timestamp(time_now))
+                    stmt.bind(2, to_string(result[0][3].data.to_number() + tsum))
+                    stmt.bind(3, id)
+                    stmt.just_exec()
+                    state = "OUT"
+                else
+                    stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
+                    stmt.bind(0, "IN")
+                    stmt.bind(1, to_timestamp(time_now))
+                    stmt.bind(2, id)
+                    stmt.just_exec()
+                    state = "IN"
+                    tsum = 0
+                end
+            else
+                if result[0][1].data == "OUT"
+                    tsum = 0
+                else
+                    tsum = -1
+                end
+                stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
+                stmt.bind(0, "IN")
+                stmt.bind(1, to_timestamp(time_now))
+                stmt.bind(2, id)
+                stmt.just_exec()
+                state = "IN"
+            end
+            stmt = db.prepare("INSERT INTO ATTD_REC VALUES(?,?,?)")
+            stmt.bind(0, state)
+            stmt.bind(1, id)
+            stmt.bind(2, get_time_str(time_now))
+            stmt.just_exec()
+            return tsum
+        else
+            stmt = db.prepare("INSERT INTO ATTD_DATA VALUES(?,?,?,?)")
+            stmt.bind(0, id)
+            stmt.bind(1, "IN")
+            stmt.bind(2, to_timestamp(time_now))
+            stmt.bind(3, "0")
+            stmt.just_exec()
+            stmt = db.prepare("INSERT INTO ATTD_REC VALUES(?,?,?)")
+            stmt.bind(0, "IN")
+            stmt.bind(1, id)
+            stmt.bind(2, get_time_str(time_now))
+            stmt.just_exec()
+            return 0
+        end
+    end
+    function get_check_log()
+        return db.exec("SELECT * FROM ATTD_REC")
+    end
 end
 
 # GUI
@@ -340,7 +455,7 @@ struct gui
                 style_color_dark()
             end
         end
-        var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true
+        var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true, tab4_open = true, rec_open = false
         var message = "无错误", code = new string, desc = new string
         var override_describe = false, override_name = false
         var name = new string, id = new string
@@ -358,7 +473,7 @@ struct gui
             end
             begin_window("Win1", window_open, {flags.menu_bar, flags.no_title_bar, flags.no_resize, flags.no_move, flags.no_collapse})
             set_window_pos(vec2(0, 0))
-            if log_open
+            if log_open || rec_open
                 set_window_size(vec2(ui.get_window_width(), 2*ui.get_window_height()/3))
             else
                 set_window_size(vec2(ui.get_window_width(), ui.get_window_height()))
@@ -376,13 +491,21 @@ struct gui
                     end
                     if menu_item("显示" + config.mod3_name, "", !log_open)
                         log_open = true
+                        rec_open = false
+                    end
+                    if menu_item("显示" + config.mod5_name, "", !tab4_open)
+                        tab4_open = true
+                    end
+                    if menu_item("显示" + config.mod6_name, "", !rec_open)
+                        rec_open = true
+                        log_open = false
                     end
                     end_menu()
                 end
                 menu_item(config.version, "", false)
                 end_menu_bar()
             end
-            if tab1_open || tab2_open || tab3_open
+            if tab1_open || tab2_open || tab3_open || tab4_open
                 text(message)
                 begin_tab_bar("TabBar")
                 if begin_tab_item(config.mod1_name, tab1_open, {})
@@ -569,6 +692,37 @@ struct gui
                     end
                     end_tab_item()
                 end
+                if begin_tab_item(config.mod5_name, tab4_open, {})
+                    text(config.id_name)
+                    same_line()
+                    input_text("##TXT1", id, 128)
+                    same_line()
+                    if button("清空" + config.id_name)
+                        code = new string
+                    end
+                    separator()
+                    if button(config.mod5_name)
+                        if id.size != 0
+                            var ret = db.check_in_out(id)
+                            switch ret
+                                default
+                                    message = "累积" + config.man_hour + "：" + ret
+                                    id = new string
+                                    refresh = true
+                                end
+                                case 0
+                                    message = config.check_in + "成功"
+                                end
+                                case -1
+                                    message = config.check_in + "成功，但缺少" + config.check_out + "记录"
+                                end
+                            end
+                        else
+                            message = "错误：" + config.id_name + "为空"
+                        end
+                    end
+                    end_tab_item()
+                end
                 end_tab_bar()
             else
                 text("请在“视图管理”中选择一个功能")
@@ -613,6 +767,56 @@ struct gui
                     text("时间")
                     next_column()
                     text(config.id_name)
+                    next_column()
+                    foreach line in log
+                        separator()
+                        foreach it in line
+                            text(it.data)
+                            next_column()
+                        end
+                    end
+                    if refresh
+                        set_scroll_here()
+                        refresh = false
+                    end
+                end_window()
+            end
+            if rec_open
+                begin_window(config.mod6_name, rec_open, {flags.menu_bar, flags.no_resize, flags.no_move, flags.no_collapse})
+                    set_window_pos(vec2(0, 2*ui.get_window_height()/3))
+                    set_window_size(vec2(ui.get_window_width(), ui.get_window_height()/3))
+                    if begin_menu_bar()
+                        if menu_item("显示所有", "", log_limit != 0)
+                            log_limit = 0
+                            refresh = true
+                        end
+                        if menu_item("显示最近10条", "", log_limit != 10)
+                            log_limit = 10
+                            refresh = true
+                        end
+                        if menu_item("显示最近100条", "", log_limit != 100)
+                            log_limit = 100
+                            refresh = true
+                        end
+                        menu_item(get_time_str(runtime.local_time()), "", false)
+                        end_menu_bar()
+                    end
+                    var log = db.get_check_log()
+                    if log_limit > 0
+                        while log.size > log_limit
+                            log.pop_front()
+                        end
+                    end
+                    columns(3, "##ATTD_REC", true)
+                    var unit = ui.get_window_width()/10
+                    set_column_width(0, unit)
+                    set_column_width(1, 3*unit)
+                    set_column_width(2, 6*unit)
+                    text("记录")
+                    next_column()
+                    text(config.id_name)
+                    next_column()
+                    text("时间")
                     next_column()
                     foreach line in log
                         separator()
