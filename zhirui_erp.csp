@@ -22,6 +22,7 @@
 @charset: utf8
 
 import imgui, imgui_font, code128, csdbc
+import codec.base64.standard as base64
 import codec.json as json
 using  imgui
 
@@ -87,17 +88,17 @@ end
 
 function to_timestamp(t)
 @begin
-    return json.to_string(json.from_var({
+    return base64.encode(json.to_string(json.from_var({
         "year": t.year,
         "day" : t.yday,
         "hour": t.hour,
         "min" : t.min
-    }.to_hash_map()))
+    }.to_hash_map())))
 @end
 end
 
 function from_timestamp(t)
-    return json.to_var(json.from_string(t))
+    return json.to_var(json.from_string(base64.decode(t)))
 end
 
 # Database
