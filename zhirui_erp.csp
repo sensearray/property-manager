@@ -383,20 +383,23 @@ struct database
         if result.size > 0
             var time_stamp = from_timestamp(result[0][2].data)
             var tsum = time_now.hour - time_stamp.hour
+            var ts_str = to_timestamp(time_now)
+            var tm_str = get_time_str(time_now)
             var state = null
             if time_stamp.year == time_now.year && time_stamp.day == time_now.yday
                 if result[0][1].data == "IN"
+                    var sum_str = to_string(result[0][3].data.to_number() + tsum)
                     stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=?, TIME_SUM=? WHERE ID=?")
                     stmt.bind(0, "OUT")
-                    stmt.bind(1, to_timestamp(time_now))
-                    stmt.bind(2, to_string(result[0][3].data.to_number() + tsum))
+                    stmt.bind(1, ts_str)
+                    stmt.bind(2, sum_str)
                     stmt.bind(3, id)
                     stmt.just_exec()
                     state = "OUT"
                 else
                     stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
                     stmt.bind(0, "IN")
-                    stmt.bind(1, to_timestamp(time_now))
+                    stmt.bind(1, ts_str)
                     stmt.bind(2, id)
                     stmt.just_exec()
                     state = "IN"
@@ -410,7 +413,7 @@ struct database
                 end
                 stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
                 stmt.bind(0, "IN")
-                stmt.bind(1, to_timestamp(time_now))
+                stmt.bind(1, tm_str)
                 stmt.bind(2, id)
                 stmt.just_exec()
                 state = "IN"
@@ -418,20 +421,22 @@ struct database
             stmt = db.prepare("INSERT INTO ATTD_REC VALUES(?,?,?)")
             stmt.bind(0, state)
             stmt.bind(1, id)
-            stmt.bind(2, get_time_str(time_now))
+            stmt.bind(2, tm_str)
             stmt.just_exec()
             return tsum
         else
+            var ts_str = to_timestamp(time_now)
+            var tm_str = get_time_str(time_now)
             stmt = db.prepare("INSERT INTO ATTD_DATA VALUES(?,?,?,?)")
             stmt.bind(0, id)
             stmt.bind(1, "IN")
-            stmt.bind(2, to_timestamp(time_now))
+            stmt.bind(2, ts_str)
             stmt.bind(3, "0")
             stmt.just_exec()
             stmt = db.prepare("INSERT INTO ATTD_REC VALUES(?,?,?)")
             stmt.bind(0, "IN")
             stmt.bind(1, id)
-            stmt.bind(2, get_time_str(time_now))
+            stmt.bind(2, tm_str)
             stmt.just_exec()
             return -1
         end
