@@ -413,7 +413,7 @@ struct database
                 end
                 stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
                 stmt.bind(0, "IN")
-                stmt.bind(1, tm_str)
+                stmt.bind(1, ts_str)
                 stmt.bind(2, id)
                 stmt.just_exec()
                 state = "IN"
