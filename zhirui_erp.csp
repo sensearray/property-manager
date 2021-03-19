@@ -36,7 +36,7 @@ namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
     var      title = "知锐ERP综合管理系统"
-    var    version = "版本：v2.2"
+    var    version = "版本：v2.3"
     var   out_name = "借出"
     var    in_name = "归还"
     # enabled when >=0, monitor id
@@ -561,7 +561,7 @@ struct gui
         end
         var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true, tab4_open = true, rec_open = true, tab5_open = true
         var message = "无错误", code = new string, desc = new string
-        var override_describe = false, override_name = false, override_info = false
+        var override_describe = false, override_name = false, override_info = false, verifying_name = true
         var name = new string, id = new string, sect = new string, info = new string
         var refresh = true, log_limit = 0, rec_refresh = true, rec_limit = 0, log_query_count = 0, rec_query_count = 0
         var show_bar = false, barcode = new string, total_size = 0
@@ -736,25 +736,29 @@ struct gui
                     separator()
                     if button(config.mod5_name)
                         if id.size != 0
-                            var ret = db.check_in_out(id)
-                            switch ret
-                                default
-                                    message = config.check_out + "成功。累积" + config.man_hour + "：" + ret
-                                end
-                                case -1
-                                    var name_ret = db.get_name_by_id(id)
-                                    if name_ret != null
-                                        message = config.check_in + "成功。欢迎，" + name_ret
-                                    else 
-                                        message = config.check_in + "成功"
+                            var name_ret = db.get_name_by_id(id)
+                            if verifying_name && name_ret == null
+                                message = "错误：" + config.id_name + "未找到"
+                            else
+                                var ret = db.check_in_out(id)
+                                switch ret
+                                    default
+                                        message = config.check_out + "成功。累积" + config.man_hour + "：" + ret
+                                    end
+                                    case -1
+                                        if name_ret != null
+                                            message = config.check_in + "成功。欢迎，" + name_ret
+                                        else 
+                                            message = config.check_in + "成功"
+                                        end
+                                    end
+                                    case -2
+                                        message = config.check_in + "成功。上次未" + config.check_out + "，无有效" + config.man_hour + "累积"
                                     end
                                 end
-                                case -2
-                                    message = config.check_in + "成功。上次未" + config.check_out + "，无有效" + config.man_hour + "累积"
-                                end
+                                rec_refresh = true
+                                id = new string
                             end
-                            rec_refresh = true
-                            id = new string
                         else
                             message = "错误：" + config.id_name + "为空"
                         end
@@ -772,6 +776,7 @@ struct gui
                             message = "错误：" + config.id_name + "为空"
                         end
                     end
+                    check_box(config.mod5_name + "时验证" + config.id_name + "##CHECK4", verifying_name)
                     end_tab_item()
                 end
                 if begin_tab_item(config.mod7_name, tab5_open, {})
