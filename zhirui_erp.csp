@@ -36,9 +36,11 @@ namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
     var      title = "知锐ERP综合管理系统"
-    var    version = "版本：v2.1 Beta"
+    var    version = "版本：v2.2"
     var   out_name = "借出"
     var    in_name = "归还"
+    # enabled when >=0, monitor id
+    var fullscreen = -1
     var  win_width = 1280
     var win_height = 720
     var  font_size = 20
@@ -110,10 +112,14 @@ struct user_data
     var info = new string
 end
 
+struct query_cache
+    var query_count = config.query_freq*10
+    var actual_data = null
+end
+
 struct database
     var db = csdbc_adapter
-    var name_buff = new hash_map
-    var query_count = 0
+    var query_buff = new hash_map
     function create()
         # Code: 条形码, Item_Desc: 物品描述, Avail: 可用数量
         db.just_exec("CREATE TABLE ITEM_DATA(CODE " + db.typenames_full[csdbc.sql_text] + ", ITEM_DESC " + db.typenames_full[csdbc.sql_text] + ", AVAIL " + db.typenames_full[csdbc.sql_int] + ")")
@@ -383,23 +389,20 @@ struct database
         if result.size > 0
             var time_stamp = from_timestamp(result[0][2].data)
             var tsum = time_now.hour - time_stamp.hour
-            var ts_str = to_timestamp(time_now)
-            var tm_str = get_time_str(time_now)
             var state = null
             if time_stamp.year == time_now.year && time_stamp.day == time_now.yday
                 if result[0][1].data == "IN"
-                    var sum_str = to_string(result[0][3].data.to_number() + tsum)
                     stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=?, TIME_SUM=? WHERE ID=?")
                     stmt.bind(0, "OUT")
-                    stmt.bind(1, ts_str)
-                    stmt.bind(2, sum_str)
+                    stmt.bind(1, to_timestamp(time_now))
+                    stmt.bind(2, to_string(result[0][3].data.to_number() + tsum))
                     stmt.bind(3, id)
                     stmt.just_exec()
                     state = "OUT"
                 else
                     stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
                     stmt.bind(0, "IN")
-                    stmt.bind(1, ts_str)
+                    stmt.bind(1, to_timestamp(time_now))
                     stmt.bind(2, id)
                     stmt.just_exec()
                     state = "IN"
@@ -413,7 +416,7 @@ struct database
                 end
                 stmt = db.prepare("UPDATE ATTD_DATA SET STATE=?, TIME_STAMP=? WHERE ID=?")
                 stmt.bind(0, "IN")
-                stmt.bind(1, ts_str)
+                stmt.bind(1, to_timestamp(time_now))
                 stmt.bind(2, id)
                 stmt.just_exec()
                 state = "IN"
@@ -421,22 +424,20 @@ struct database
             stmt = db.prepare("INSERT INTO ATTD_REC VALUES(?,?,?)")
             stmt.bind(0, state)
             stmt.bind(1, id)
-            stmt.bind(2, tm_str)
+            stmt.bind(2, get_time_str(time_now))
             stmt.just_exec()
             return tsum
         else
-            var ts_str = to_timestamp(time_now)
-            var tm_str = get_time_str(time_now)
             stmt = db.prepare("INSERT INTO ATTD_DATA VALUES(?,?,?,?)")
             stmt.bind(0, id)
             stmt.bind(1, "IN")
-            stmt.bind(2, ts_str)
+            stmt.bind(2, to_timestamp(time_now))
             stmt.bind(3, "0")
             stmt.just_exec()
             stmt = db.prepare("INSERT INTO ATTD_REC VALUES(?,?,?)")
             stmt.bind(0, "IN")
             stmt.bind(1, id)
-            stmt.bind(2, tm_str)
+            stmt.bind(2, get_time_str(time_now))
             stmt.just_exec()
             return -1
         end
@@ -489,21 +490,24 @@ struct database
         end
     end
     function get_name_by_id(id)
-        if ++query_count > config.query_freq*10
-            query_count = 0
+        if !query_buff.exist(id)
+            query_buff[id] = new query_cache
+        end
+        if ++query_buff[id].query_count > config.query_freq*10
+            query_buff[id].query_count = 0
             var result = db.exec("SELECT NAME FROM USER_DATA WHERE ID=\"" + id +"\"")
             if !result.empty()
-                name_buff[id] = result[0][0].data
+                query_buff[id].actual_data = result[0][0].data
                 return result[0][0].data
             else
-                if name_buff.exist(id)
-                    name_buff.erase(id)
+                if query_buff.exist(id)
+                    query_buff.erase(id)
                 end
                 return null
             end
         else
-            if name_buff.exist(id)
-                return name_buff.at(id)
+            if query_buff.exist(id)
+                return query_buff[id].actual_data
             else
                 return null
             end
@@ -538,7 +542,11 @@ struct gui
         if !db.validate()
             db.create()
         end
-        ui = window_application(config.win_width, config.win_height, config.title)
+        if config.fullscreen >= 0
+            ui = fullscreen_application(config.fullscreen, config.title)
+        else
+            ui = window_application(config.win_width, config.win_height, config.title)
+        end
         font = add_font_extend_cn(imgui_font.source_han_sans, config.font_size)
         switch config.style
             case "classic"
@@ -597,6 +605,9 @@ struct gui
                     end
                     if menu_item("显示" + config.mod6_name, "", !rec_open)
                         rec_open = true
+                    end
+                    if config.fullscreen >=0 && menu_item("退出程序", "", true)
+                        system.exit(0)
                     end
                     end_menu()
                 end
