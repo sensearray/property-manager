@@ -54,6 +54,7 @@ namespace config
     var  mod5_name = "签到/签退"
     var  mod6_name = "值班记录"
     var  mod7_name = "信息管理"
+    var  mod8_name = "值班人员"
     var  info_name = "信息"
     var  item_name = "物品"
     var  code_name = "编码"
@@ -103,6 +104,18 @@ function from_timestamp(t)
     return json.to_var(json.from_string(base64.decode(t)))
 end
 
+function timestamp2string(t)
+    var ts = from_timestamp(t)
+    var hour = null
+    if ts.hour < 13
+        hour = " 上午 " + align(to_string(ts.hour))
+    else
+        hour = " 下午 " + align(to_string(ts.hour - 12))
+    end
+    return align(hour) + "时" + align(to_string(ts.min)) + "分" 
+
+end
+
 # Database
 
 struct user_data
@@ -113,7 +126,7 @@ struct user_data
 end
 
 struct query_cache
-    var query_count = config.query_freq*10
+    var query_count = config.query_freq * 10
     var actual_data = null
 end
 
@@ -476,6 +489,23 @@ struct database
             return false
         end
     end
+
+    function get_info_by_state()
+        var r = db.exec("SELECT ID, TIME_STAMP FROM ATTD_DATA WHERE STATE = \"IN\"")
+        if r.empty()
+            return {}
+        end
+        var result = {}
+        foreach line in r 
+            var time_stamp = from_timestamp(line[1].data)
+            var now_time =  runtime.local_time()
+            if time_stamp.year == now_time.year && time_stamp.day == now_time.yday  
+                result.push_back(line)
+            end 
+        end
+        return result
+    end
+
     function get_info_by_id(id)
         var result = db.exec("SELECT * FROM USER_DATA WHERE ID=\"" + id +"\"")
         if result.empty()
@@ -489,6 +519,7 @@ struct database
             return move(dat)
         end
     end
+
     function get_name_by_id(id)
         if !query_buff.exist(id)
             query_buff[id] = new query_cache
@@ -559,14 +590,14 @@ struct gui
                 style_color_dark()
             end
         end
-        var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true, tab4_open = true, rec_open = true, tab5_open = true
+        var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true, tab4_open = true, rec_open = true, tab5_open = true, stay_open = true;
         var message = "无错误", code = new string, desc = new string
         var override_describe = false, override_name = false, override_info = false, verifying_name = true
         var name = new string, id = new string, sect = new string, info = new string
-        var refresh = true, log_limit = 0, rec_refresh = true, rec_limit = 0, log_query_count = 0, rec_query_count = 0
+        var refresh = true, log_limit = 0, rec_refresh = true, rec_limit = 0, log_query_count = 0, rec_query_count = 0, stay_refresh = true, stay_limit = 0, stay_query_count = 0
         var show_bar = false, barcode = new string, total_size = 0
         var slice = 2, height = 90, padding = 6, scale = 1
-        var rent_log = db.get_log(), check_log = db.get_check_log()
+        var rent_log = db.get_log(), check_log = db.get_check_log(), stay_log = db.get_info_by_state()
         loop
             if ui.is_closed()
                 system.exit(0)
@@ -578,11 +609,19 @@ struct gui
             end
             begin_window("Win1", window_open, {flags.menu_bar, flags.no_title_bar, flags.no_resize, flags.no_move, flags.no_collapse})
             set_window_pos(vec2(0, 0))
+            var width = 0, height = 0
             if log_open || rec_open
-                set_window_size(vec2(ui.get_window_width()/2, ui.get_window_height()))
+                width = ui.get_window_width() / 2 
             else
-                set_window_size(vec2(ui.get_window_width(), ui.get_window_height()))
+                width = ui.get_window_width()
             end
+
+            if stay_open
+                height = ui.get_window_height() * 2 / 3
+            else
+                height = ui.get_window_height()
+            end
+            set_window_size(vec2(width, height))
             if begin_menu_bar()
                 if begin_menu("视图管理", true)
                     if menu_item("显示" + config.mod1_name, "", !tab1_open)
@@ -605,6 +644,9 @@ struct gui
                     end
                     if menu_item("显示" + config.mod6_name, "", !rec_open)
                         rec_open = true
+                    end
+                    if menu_item("显示" + config.mod8_name, "", !stay_open)
+                        stay_open = true
                     end
                     if config.fullscreen >=0 && menu_item("退出程序", "", true)
                         system.exit(0)
@@ -1083,8 +1125,82 @@ struct gui
                     end
                 end_window()
             end
+            if stay_open
+                begin_window(config.mod8_name, stay_open, {flags.menu_bar, flags.no_resize, flags.no_move, flags.no_collapse})
+                    var w_pos = 0, h_pos = 0, width = 0, height = 0
+                    if log_open || rec_open
+                        width = ui.get_window_width()/2   
+                    else
+                        width = ui.get_window_width()
+                    end
+
+                    if tab1_open || tab2_open || tab3_open || tab4_open || tab5_open
+                        h_pos = ui.get_window_height() * 2 / 3
+                        height = ui.get_window_height() / 3
+                    else
+                        h_pos = 0
+                        height = ui.get_window_height()
+                    end
+                    set_window_pos(vec2(w_pos, h_pos))
+                    set_window_size(vec2(width, height))
+                    if begin_menu_bar()
+                        if menu_item("显示所有", "", stay_limit != 0)
+                            stay_limit = 0
+                            stay_refresh = true
+                        end
+                        if menu_item("显示最近5条", "", stay_limit != 5)
+                            stay_limit = 5
+                            stay_refresh = true
+                        end
+                        if menu_item("显示最近10条", "", stay_limit != 10)
+                            stay_limit = 10
+                            stay_refresh = true
+                        end
+                        menu_item(get_time_str(runtime.local_time()), "", false)
+                        end_menu_bar()
+                    end
+                    if ++stay_query_count > config.query_freq || stay_refresh
+                        stay_query_count = 0
+                        stay_log = db.get_info_by_state()
+                    end
+                    if stay_limit > 0
+                        while stay_log.size > stay_limit
+                            stay_log.pop_front()
+                        end
+                    end
+                    columns(2, "##ATTD_DATA", true)
+                    var unit = ui.get_window_width()/20
+                    set_column_width(0, 3*unit)
+                    set_column_width(1, 6*unit)
+                    text(config.id_name)
+                    next_column()
+                    text("签到时间")
+                    next_column()
+                    foreach line in stay_log
+                        separator()
+                        foreach i in range(line.size)
+                            switch i
+                                case 0
+                                    var ret = db.get_name_by_id(line[i].data)
+                                    text((ret == null ? "未知" : ret))
+                                end
+                                case 1
+                                    text(timestamp2string(line[i].data))
+                                    #text(line[i].data)
+                                end
+                            end
+                            next_column()
+                        end
+                    end
+                    if stay_refresh
+                        set_scroll_here()
+                        stay_refresh = false
+                    end
+                end_window()
+            end
             ui_render()
         end
+        
     end
 end
 
