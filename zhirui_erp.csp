@@ -36,7 +36,7 @@ namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
     var      title = "知锐ERP综合管理系统"
-    var    version = "版本：v2.3"
+    var    version = "版本：v2.4"
     var   out_name = "借出"
     var    in_name = "归还"
     # enabled when >=0, monitor id
@@ -112,7 +112,7 @@ function timestamp2string(t)
     else
         hour = " 下午 " + align(to_string(ts.hour - 12))
     end
-    return align(hour) + "时" + align(to_string(ts.min)) + "分" 
+    return align(hour) + " 时 " + align(to_string(ts.min)) + " 分" 
 
 end
 
@@ -1172,7 +1172,7 @@ struct gui
                     var unit = ui.get_window_width()/20
                     set_column_width(0, 3*unit)
                     set_column_width(1, 6*unit)
-                    text(config.id_name)
+                    text(config.nm_name)
                     next_column()
                     text("签到时间")
                     next_column()
