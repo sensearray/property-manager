@@ -1,0 +1,14 @@
+{
+    "Name": "zhirui_erp",
+    "Info": "Chengdu Zhirui ERP System",
+    "Author": "Chengdu Zhirui Technology Co., LTD.",
+    "Version": "2.4.0",
+    "Target": "https://raw.githubusercontent.com/chengdu-zhirui/property-manager/main/zhirui_erp.csp",
+    "Dependencies": [
+        "codec",
+        "imgui",
+        "imgui_font",
+        "code128",
+        "csdbc"
+    ]
+}
