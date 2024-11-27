@@ -1,2 +1,2 @@
-# property-manager
-Property Management System written by Covariant Script
+# Property Management System
+Property Management System modified by SenseArray Technology (Chengdu) Co., LTD.
