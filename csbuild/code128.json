@@ -1,8 +1,9 @@
 {
+    "Type": "Package",
     "Name": "code128",
     "Info": "Code 128 Generator",
     "Author": "Covariant Opensource Community",
     "Version": "1.0.0",
-    "Target": "https://raw.githubusercontent.com/unicov-osc/property-manager/main/code128.csp",
+    "Target": "code128.csp",
     "Dependencies": []
 }

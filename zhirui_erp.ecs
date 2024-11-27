@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Copyright (C) 2020-2021 Chengdu Covariant Technology Co., LTD.
+# Copyright (C) 2020-2024 Covariant Opensource Community
 #
-# Email:   dev@covariant.cn
-# Github:  https://github.com/chengdu-zhirui
-# Website: https://covariant.cn
+# Email:   dev@unicov.cn
+# Github:  https://github.com/unicov-osc
+# Website: https://unicov.cn
 
 @require: 210601
 @charset: utf8
@@ -35,8 +35,8 @@ var csdbc_adapter = null
 namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
-    var      title = "知锐ERP综合管理系统"
-    var    version = "版本：v2.4"
+    var      title = "智锐ERP综合管理系统"
+    var    version = "版本：v2.4.2"
     var   out_name = "借出"
     var    in_name = "归还"
     # enabled when >=0, monitor id
