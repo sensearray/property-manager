@@ -2,7 +2,7 @@
     "Name": "zhirui_erp",
     "Info": "Chengdu Zhirui ERP System",
     "Author": "Covariant Opensource Community",
-    "Version": "2.4.2",
+    "Version": "2.4.3",
     "Target": "https://raw.githubusercontent.com/unicov-osc/property-manager/main/zhirui_erp.csp",
     "Dependencies": [
         "codec",

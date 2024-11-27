@@ -36,7 +36,7 @@ namespace config
     var       mons = {"一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"}
     var       days = {"星期天", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
     var      title = "智锐ERP综合管理系统"
-    var    version = "版本：v2.4.2"
+    var    version = "版本：v2.4.3"
     var   out_name = "借出"
     var    in_name = "归还"
     # enabled when >=0, monitor id
@@ -48,13 +48,21 @@ namespace config
     # classic, light, dark
     var      style = "light"
     var  mod1_name = "资产管理"
+    var  mod1_open = true
     var  mod2_name = "办理借还"
+    var  mod2_open = true
     var  mod3_name = "借还记录"
+    var  mod3_open = true
     var  mod4_name = "生成条码"
+    var  mod4_open = true
     var  mod5_name = "签到/签退"
+    var  mod5_open = true
     var  mod6_name = "值班记录"
+    var  mod6_open = true
     var  mod7_name = "信息管理"
+    var  mod7_open = true
     var  mod8_name = "值班人员"
+    var  mod8_open = true
     var  info_name = "信息"
     var  card_name = "智能卡ID"
     var  item_name = "物品"
@@ -628,7 +636,7 @@ struct gui
                 style_color_dark()
             end
         end
-        var window_open = true, tab1_open = true, tab2_open = true, tab3_open = true, log_open = true, tab4_open = true, rec_open = true, tab5_open = true, stay_open = true;
+        var window_open = true, tab1_open = config.mod1_open, tab2_open = config.mod2_open, tab3_open = config.mod4_open, log_open = config.mod3_open, tab4_open = config.mod5_open, rec_open = config.mod6_open, tab5_open = config.mod7_open, stay_open = config.mod8_open;
         var message = "无错误", code = new string, desc = new string
         var override_describe = false, override_name = false, override_info = false, verifying_name = true
         var name = new string, id = new string, sect = new string, info = new string
